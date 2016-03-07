@@ -7,8 +7,8 @@ extern crate staticfile;
 use std::fs;
 use std::fs::metadata;
 use std::path::Path;
-use std::process;
 use std::process::Command;
+use std::os::unix::fs::symlink;
 
 // Iron
 use iron::prelude::*;
@@ -89,7 +89,11 @@ fn post_process_handler(_req: &mut Request) -> IronResult<Response> {
 
 fn main() {
 	if let Err(_) = fs::create_dir_all("images") {
-		process::exit(-1);
+		panic!("Couldn't create the folder `images`.");
+	}
+
+	if !file_exists("public/tv") {
+		panic!("The folder `public/tv` doesn't exist.");
 	}
 
 	let mut router = Router::new();
