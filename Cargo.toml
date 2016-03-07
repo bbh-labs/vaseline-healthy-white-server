@@ -6,5 +6,6 @@ authors = ["Jacky Boen <jacky.boen@bartleboglehegarty.com"]
 [dependencies]
 iron = "*"
 mount = "*"
+persistent = "*"
 router = "*"
 staticfile = "*"

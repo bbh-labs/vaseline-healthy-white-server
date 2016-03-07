@@ -1,5 +1,6 @@
 extern crate iron;
 extern crate mount;
+extern crate persistent;
 extern crate router;
 extern crate staticfile;
 
@@ -13,9 +14,16 @@ use std::os::unix::fs::symlink;
 // Iron
 use iron::prelude::*;
 use iron::status;
+use iron::typemap::Key;
 use mount::Mount;
+use persistent::Write;
 use router::Router;
 use staticfile::Static;
+
+#[derive(Copy, Clone)]
+pub struct LastResult;
+
+impl Key for LastResult { type Value = String; }
 
 fn file_exists(filename: &str) -> bool {
 	match metadata(filename) {
@@ -35,12 +43,18 @@ fn available_filename(prefix: &str, suffix: &str) -> String {
 	"".to_string()
 }
 
-fn capture_handler(_req: &mut Request) -> IronResult<Response> {
+fn result_handler(req: &mut Request) -> IronResult<Response> {
+	let mutex = req.get::<Write<LastResult>>().unwrap();
+	let last_result = mutex.lock().unwrap();
+	Ok(Response::with((status::Ok, (*last_result).clone())))
+}
+
+fn capture_handler(req: &mut Request) -> IronResult<Response> {
 	let output_filename = available_filename("images/raw_output", ".jpg");
 	let output = Command::new("gphoto2")
 	                     .arg("--auto-detect")
 						 .arg("--capture-image-and-download")
-						 .arg(output_filename)
+						 .arg(&output_filename)
 						 .output()
 						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
 
@@ -48,6 +62,9 @@ fn capture_handler(_req: &mut Request) -> IronResult<Response> {
 
 	let output_message = 
 		if output.status.success() {
+			let mutex = req.get::<Write<LastResult>>().unwrap();
+			let mut last_result = mutex.lock().unwrap();
+			*last_result = output_filename;
 			response = Response::with(status::Ok);
 			output.stdout
 		} else {
@@ -99,6 +116,7 @@ fn main() {
 	let _ = symlink("images", "public/tv/images");
 
 	let mut router = Router::new();
+	router.get("/result", result_handler);
 	router.post("/capture", capture_handler);
 	router.post("/post_process", post_process_handler);
 
@@ -107,5 +125,8 @@ fn main() {
 	mount.mount("/tv", Static::new(Path::new("public/tv")));
 	mount.mount("/api", router);
 
-	Iron::new(mount).http("localhost:8080").unwrap();
+	let mut chain = Chain::new(mount);
+	chain.link_before(Write::<LastResult>::one("".to_string()));
+
+	Iron::new(chain).http("localhost:8080").unwrap();
 }
