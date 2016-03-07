@@ -96,6 +96,8 @@ fn main() {
 		panic!("The folder `public/tv` doesn't exist.");
 	}
 
+	let _ = symlink("images", "public/tv/images");
+
 	let mut router = Router::new();
 	router.post("/capture", capture_handler);
 	router.post("/post_process", post_process_handler);
