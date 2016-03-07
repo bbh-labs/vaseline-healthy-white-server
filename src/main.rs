@@ -4,9 +4,11 @@ extern crate router;
 extern crate staticfile;
 
 // Standard Library
-use std::process::Command;
-use std::path::Path;
+use std::fs;
 use std::fs::metadata;
+use std::path::Path;
+use std::process;
+use std::process::Command;
 
 // Iron
 use iron::prelude::*;
@@ -34,7 +36,7 @@ fn available_filename(prefix: &str, suffix: &str) -> String {
 }
 
 fn capture_handler(_req: &mut Request) -> IronResult<Response> {
-	let output_filename = available_filename("raw_output", ".jpg");
+	let output_filename = available_filename("images/raw_output", ".jpg");
 	let output = Command::new("gphoto2")
 	                     .arg("--auto-detect")
 						 .arg("--capture-image-and-download")
@@ -60,8 +62,8 @@ fn capture_handler(_req: &mut Request) -> IronResult<Response> {
 
 fn post_process_handler(_req: &mut Request) -> IronResult<Response> {
 	let style_filename  = "style.xmp";
-	let input_filename = available_filename("raw_output", ".jpg");
-	let output_filename = available_filename("output", ".jpg");
+	let input_filename = available_filename("images/raw_output", ".jpg");
+	let output_filename = available_filename("images/output", ".jpg");
 	let output = Command::new("darktable-cli")
 	                     .arg(&input_filename)
 						 .arg(&style_filename)
@@ -86,6 +88,10 @@ fn post_process_handler(_req: &mut Request) -> IronResult<Response> {
 }
 
 fn main() {
+	if let Err(_) = fs::create_dir_all("images") {
+		process::exit(-1);
+	}
+
 	let mut router = Router::new();
 	router.post("/capture", capture_handler);
 	router.post("/post_process", post_process_handler);
