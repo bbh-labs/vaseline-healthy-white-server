@@ -1,0 +1,10 @@
+[package]
+name = "vaseline-healthy-white"
+version = "0.1.0"
+authors = ["jacky"]
+
+[dependencies]
+iron = "*"
+mount = "*"
+router = "*"
+staticfile = "*"
