@@ -79,12 +79,15 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
 	Ok(response)
 }
 
-fn post_process_handler(_req: &mut Request) -> IronResult<Response> {
+fn post_process_handler(req: &mut Request) -> IronResult<Response> {
+	let mutex = req.get::<Write<LastResult>>().unwrap();
+	let last_result = mutex.lock().unwrap();
+
 	let style_filename  = "style.xmp";
-	let input_filename = available_filename("images/raw_output", ".jpg");
+	let input_filename = last_result;
 	let output_filename = available_filename("images/output", ".jpg");
 	let output = Command::new("darktable-cli")
-	                     .arg(&input_filename)
+	                     .arg((*input_filename).clone())
 						 .arg(&style_filename)
 						 .arg(&output_filename)
 						 .output()
