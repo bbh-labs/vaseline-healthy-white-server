@@ -23,134 +23,137 @@ use staticfile::Static;
 
 #[derive(Copy, Clone)]
 pub struct LastResult;
-impl Key for LastResult { type Value = String; }
+impl Key for LastResult {
+    type Value = String;
+}
 
 #[derive(PartialEq)]
 pub enum Stage {
-	Idle,
-	Processing,
+    Idle,
+    Processing,
 }
 
 #[derive(Copy, Clone)]
 pub struct CurrentStage;
-impl Key for CurrentStage { type Value = Stage; }
+impl Key for CurrentStage {
+    type Value = Stage;
+}
 
 fn file_exists(filename: &str) -> bool {
-	match metadata(filename) {
-		Ok(_) => true,
-		Err(_) => false,
-	}
+    match metadata(filename) {
+        Ok(_) => true,
+        Err(_) => false,
+    }
 }
 
 fn available_filename(prefix: &str, suffix: &str) -> String {
-	for i in 0..999999 {
-		let filename = format!("{}{}{}", prefix, i, suffix);
-		if !file_exists(&filename) {
-			return filename.to_string()
-		}
-	}
+    for i in 0..999999 {
+        let filename = format!("{}{}{}", prefix, i, suffix);
+        if !file_exists(&filename) {
+            return filename.to_string();
+        }
+    }
 
-	"".to_string()
+    "".to_string()
 }
 
 fn result_handler(req: &mut Request) -> IronResult<Response> {
-	let mutex = req.get::<Write<LastResult>>().unwrap();
-	let last_result = mutex.lock().unwrap();
-	Ok(Response::with((status::Ok, (*last_result).clone())))
+    let mutex = req.get::<Write<LastResult>>().unwrap();
+    let last_result = mutex.lock().unwrap();
+    Ok(Response::with((status::Ok, (*last_result).clone())))
 }
 
 fn capture_handler(req: &mut Request) -> IronResult<Response> {
-	let mutex = req.get::<Write<CurrentStage>>().unwrap();
-	let mut stage = mutex.lock().unwrap();
-	if *stage != Stage::Idle {
-		return Ok(Response::with(status::BadRequest));
-	}
-	*stage = Stage::Processing;
+    let mutex = req.get::<Write<CurrentStage>>().unwrap();
+    let mut stage = mutex.lock().unwrap();
+    if *stage != Stage::Idle {
+        return Ok(Response::with(status::BadRequest));
+    }
+    *stage = Stage::Processing;
 
-	// Capture
-	let output_filename = available_filename("images/raw_output", ".jpg");
-	let output = Command::new("gphoto2")
-						 .arg("--auto-detect")
-						 .arg("--capture-image-and-download")
-						 .arg("--filename")
-						 .arg(&output_filename)
-						 .output()
-						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
-	println!("Raw output filename: {}", &output_filename);
+    // Capture
+    let output_filename = available_filename("images/raw_output", ".jpg");
+    let output = Command::new("gphoto2")
+                     .arg("--auto-detect")
+                     .arg("--capture-image-and-download")
+                     .arg("--filename")
+                     .arg(&output_filename)
+                     .output()
+                     .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
+    println!("Raw output filename: {}", &output_filename);
 
-	let output_message = 
-		if output.status.success() {
-			let mutex = req.get::<Write<LastResult>>().unwrap();
-			let mut last_result = mutex.lock().unwrap();
-			*last_result = output_filename;
-			output.stdout
-		} else {
-			output.stderr
-		};
+    let output_message = if output.status.success() {
+        let mutex = req.get::<Write<LastResult>>().unwrap();
+        let mut last_result = mutex.lock().unwrap();
+        *last_result = output_filename;
+        output.stdout
+    } else {
+        output.stderr
+    };
 
-	println!("{}", String::from_utf8(output_message).unwrap());
+    println!("{}", String::from_utf8(output_message).unwrap());
 
-	if !output.status.success() {
-		*stage = Stage::Idle;
-		return Ok(Response::with(status::InternalServerError));
-	}
+    if !output.status.success() {
+        *stage = Stage::Idle;
+        return Ok(Response::with(status::InternalServerError));
+    }
 
-	// Post-Processing
-	let mutex = req.get::<Write<LastResult>>().unwrap();
-	let last_result = mutex.lock().unwrap();
+    // Post-Processing
+    let mutex = req.get::<Write<LastResult>>().unwrap();
+    let last_result = mutex.lock().unwrap();
 
-	let style_filename  = "style.xmp";
-	let input_filename = last_result;
-	let output_filename = available_filename("images/output", ".jpg");
-	let output = Command::new("darktable-cli")
-						 .arg((*input_filename).clone())
-						 .arg(&style_filename)
-						 .arg(&output_filename)
-						 .output()
-						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
-	println!("Output filename: {}", &output_filename);
+    let style_filename = "style.xmp";
+    let input_filename = last_result;
+    let output_filename = available_filename("images/output", ".jpg");
+    let output = Command::new("darktable-cli")
+                     .arg((*input_filename).clone())
+                     .arg(&style_filename)
+                     .arg(&output_filename)
+                     .output()
+                     .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
+    println!("Output filename: {}", &output_filename);
 
-	let response;
-	let output_message = 
-		if output.status.success() {
-			response = Response::with((status::Ok, output_filename));
-			output.stdout
-		} else {
-			response = Response::with(status::InternalServerError);
-			output.stderr
-		};
+    let response;
+    let output_message = if output.status.success() {
+        response = Response::with((status::Ok, output_filename));
+        output.stdout
+    } else {
+        response = Response::with(status::InternalServerError);
+        output.stderr
+    };
 
-	println!("{}", String::from_utf8(output_message).unwrap());
+    println!("{}", String::from_utf8(output_message).unwrap());
 
-	*stage = Stage::Idle;
+    *stage = Stage::Idle;
 
-	Ok(response)
+    Ok(response)
 }
 
 fn main() {
-	if let Err(_) = fs::create_dir_all("images") {
-		panic!("Couldn't create the folder `images`.");
-	}
+    if let Err(_) = fs::create_dir_all("images") {
+        panic!("Couldn't create the folder `images`.");
+    }
 
-	if !file_exists("public/tv") {
-		panic!("The folder `public/tv` doesn't exist.");
-	}
+    if !file_exists("public/tv") {
+        panic!("The folder `public/tv` doesn't exist.");
+    }
 
-	let current_directory = current_dir().unwrap();
-	let _ = symlink(format!("{}/images", current_directory.to_str().unwrap()), "public/tv/images");
+    let current_directory = current_dir().unwrap();
+    let _ = symlink(format!("{}/images", current_directory.to_str().unwrap()),
+                    "public/tv/images");
 
-	let mut router = Router::new();
-	router.get("/result", result_handler);
-	router.post("/capture", capture_handler);
+    let mut router = Router::new();
+    router.get("/result", result_handler);
+    router.post("/capture", capture_handler);
 
-	let mut mount = Mount::new();
-	mount.mount("/", Static::new(Path::new("public")));
-	mount.mount("/tv", Static::new(Path::new("public/tv")));
-	mount.mount("/api", router);
+    let mut mount = Mount::new();
+    mount.mount("/", Static::new(Path::new("public")));
+    mount.mount("/tv", Static::new(Path::new("public/tv")));
+    mount.mount("/api", router);
 
-	let mut chain = Chain::new(mount);
-	chain.link_before(Write::<LastResult>::one("".to_string()));
-	chain.link_before(Write::<CurrentStage>::one(Stage::Idle));
+    let mut chain = Chain::new(mount);
+    chain.link_before(Write::<LastResult>::one("".to_string()));
+    chain.link_before(Write::<CurrentStage>::one(Stage::Idle));
 
-	Iron::new(chain).http("localhost:8080").unwrap();
+    Iron::new(chain).http("localhost:8080").unwrap();
 }
