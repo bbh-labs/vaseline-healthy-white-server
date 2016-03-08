@@ -54,6 +54,7 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
 	let output = Command::new("gphoto2")
 	                     .arg("--auto-detect")
 						 .arg("--capture-image-and-download")
+						 .arg("--filename")
 						 .arg(&output_filename)
 						 .output()
 						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
