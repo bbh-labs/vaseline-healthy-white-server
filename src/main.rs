@@ -22,8 +22,18 @@ use staticfile::Static;
 
 #[derive(Copy, Clone)]
 pub struct LastResult;
-
 impl Key for LastResult { type Value = String; }
+
+#[derive(PartialEq)]
+pub enum Stage {
+	Idle,
+	Capturing,
+	PostProcessing
+}
+
+#[derive(Copy, Clone)]
+pub struct CurrentStage;
+impl Key for CurrentStage { type Value = Stage; }
 
 fn file_exists(filename: &str) -> bool {
 	match metadata(filename) {
@@ -50,6 +60,13 @@ fn result_handler(req: &mut Request) -> IronResult<Response> {
 }
 
 fn capture_handler(req: &mut Request) -> IronResult<Response> {
+	let mutex = req.get::<Write<CurrentStage>>().unwrap();
+	let mut stage = mutex.lock().unwrap();
+	if *stage != Stage::Idle {
+		return Ok(Response::with(status::BadRequest));
+	}
+	*stage = Stage::Capturing;
+
 	let output_filename = available_filename("images/raw_output", ".jpg");
 	let output = Command::new("gphoto2")
 	                     .arg("--auto-detect")
@@ -75,11 +92,20 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
 		};
 
 	println!("{}", String::from_utf8(output_message).unwrap());
+	
+	*stage = Stage::Idle;
 
 	Ok(response)
 }
 
 fn post_process_handler(req: &mut Request) -> IronResult<Response> {
+	let mutex = req.get::<Write<CurrentStage>>().unwrap();
+	let mut stage = mutex.lock().unwrap();
+	if *stage != Stage::Idle {
+		return Ok(Response::with(status::BadRequest));
+	}
+	*stage = Stage::PostProcessing;
+
 	let mutex = req.get::<Write<LastResult>>().unwrap();
 	let last_result = mutex.lock().unwrap();
 
@@ -105,6 +131,8 @@ fn post_process_handler(req: &mut Request) -> IronResult<Response> {
 		};
 
 	println!("{}", String::from_utf8(output_message).unwrap());
+
+	*stage = Stage::Idle;
 
 	Ok(response)
 }
@@ -132,6 +160,7 @@ fn main() {
 
 	let mut chain = Chain::new(mount);
 	chain.link_before(Write::<LastResult>::one("".to_string()));
+	chain.link_before(Write::<CurrentStage>::one(Stage::Idle));
 
 	Iron::new(chain).http("localhost:8080").unwrap();
 }
