@@ -28,8 +28,7 @@ impl Key for LastResult { type Value = String; }
 #[derive(PartialEq)]
 pub enum Stage {
 	Idle,
-	Capturing,
-	PostProcessing
+	Processing,
 }
 
 #[derive(Copy, Clone)]
@@ -66,11 +65,12 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
 	if *stage != Stage::Idle {
 		return Ok(Response::with(status::BadRequest));
 	}
-	*stage = Stage::Capturing;
+	*stage = Stage::Processing;
 
+	// Capture
 	let output_filename = available_filename("images/raw_output", ".jpg");
 	let output = Command::new("gphoto2")
-	                     .arg("--auto-detect")
+						 .arg("--auto-detect")
 						 .arg("--capture-image-and-download")
 						 .arg("--filename")
 						 .arg(&output_filename)
@@ -78,35 +78,24 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
 						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
 	println!("Raw output filename: {}", &output_filename);
 
-	let response: Response;
-
 	let output_message = 
 		if output.status.success() {
 			let mutex = req.get::<Write<LastResult>>().unwrap();
 			let mut last_result = mutex.lock().unwrap();
 			*last_result = output_filename;
-			response = Response::with(status::Ok);
 			output.stdout
 		} else {
-			response = Response::with(status::InternalServerError);
 			output.stderr
 		};
 
 	println!("{}", String::from_utf8(output_message).unwrap());
-	
-	*stage = Stage::Idle;
 
-	Ok(response)
-}
-
-fn post_process_handler(req: &mut Request) -> IronResult<Response> {
-	let mutex = req.get::<Write<CurrentStage>>().unwrap();
-	let mut stage = mutex.lock().unwrap();
-	if *stage != Stage::Idle {
-		return Ok(Response::with(status::BadRequest));
+	if !output.status.success() {
+		*stage = Stage::Idle;
+		return Ok(Response::with(status::InternalServerError));
 	}
-	*stage = Stage::PostProcessing;
 
+	// Post-Processing
 	let mutex = req.get::<Write<LastResult>>().unwrap();
 	let last_result = mutex.lock().unwrap();
 
@@ -114,14 +103,14 @@ fn post_process_handler(req: &mut Request) -> IronResult<Response> {
 	let input_filename = last_result;
 	let output_filename = available_filename("images/output", ".jpg");
 	let output = Command::new("darktable-cli")
-	                     .arg((*input_filename).clone())
+						 .arg((*input_filename).clone())
 						 .arg(&style_filename)
 						 .arg(&output_filename)
 						 .output()
 						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
+	println!("Output filename: {}", &output_filename);
 
-	let response: Response;
-
+	let response;
 	let output_message = 
 		if output.status.success() {
 			response = Response::with((status::Ok, output_filename));
@@ -153,7 +142,6 @@ fn main() {
 	let mut router = Router::new();
 	router.get("/result", result_handler);
 	router.post("/capture", capture_handler);
-	router.post("/post_process", post_process_handler);
 
 	let mut mount = Mount::new();
 	mount.mount("/", Static::new(Path::new("public")));
