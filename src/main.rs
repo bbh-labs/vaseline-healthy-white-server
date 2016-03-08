@@ -58,6 +58,7 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
 						 .arg(&output_filename)
 						 .output()
 						 .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
+	println!("Raw output filename: {}", &output_filename);
 
 	let response: Response;
 
