@@ -5,6 +5,7 @@ extern crate router;
 extern crate staticfile;
 
 // Standard Library
+use std::env::current_dir;
 use std::fs;
 use std::fs::metadata;
 use std::path::Path;
@@ -146,7 +147,8 @@ fn main() {
 		panic!("The folder `public/tv` doesn't exist.");
 	}
 
-	let _ = symlink("images", "public/tv/images");
+	let current_directory = current_dir().unwrap();
+	let _ = symlink(format!("{}/images", current_directory.to_str().unwrap()), "public/tv/images");
 
 	let mut router = Router::new();
 	router.get("/result", result_handler);
