@@ -57,6 +57,20 @@ fn available_filename(prefix: &str, suffix: &str) -> String {
     "".to_string()
 }
 
+fn find_last_result(prefix: &str, suffix: &str) -> String {
+    let mut result = String::from("");
+
+    for i in 0..999999 {
+        let filename = format!("{}{}{}", prefix, i, suffix);
+        if !file_exists(&filename) {
+            return result;
+        }
+        result = filename
+    }
+
+    result
+}
+
 fn result_handler(req: &mut Request) -> IronResult<Response> {
     let mutex = req.get::<Write<LastResult>>().unwrap();
     let last_result = mutex.lock().unwrap();
@@ -152,7 +166,7 @@ fn main() {
     mount.mount("/api", router);
 
     let mut chain = Chain::new(mount);
-    chain.link_before(Write::<LastResult>::one("".to_string()));
+    chain.link_before(Write::<LastResult>::one(find_last_result("images/output", ".jpg")));
     chain.link_before(Write::<CurrentStage>::one(Stage::Idle));
 
     Iron::new(chain).http("localhost:8080").unwrap();
