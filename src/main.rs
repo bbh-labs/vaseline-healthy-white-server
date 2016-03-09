@@ -21,6 +21,8 @@ use persistent::Write;
 use router::Router;
 use staticfile::Static;
 
+const ADDRESS: &'static str = "localhost:8080";
+
 #[derive(Copy, Clone)]
 pub struct LastResult;
 impl Key for LastResult {
@@ -169,5 +171,6 @@ fn main() {
     chain.link_before(Write::<LastResult>::one(find_last_result("images/output", ".jpg")));
     chain.link_before(Write::<CurrentStage>::one(Stage::Idle));
 
-    Iron::new(chain).http("localhost:8080").unwrap();
+    println!("Serving at {}", ADDRESS);
+    Iron::new(chain).http(ADDRESS).unwrap();
 }
