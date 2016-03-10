@@ -157,7 +157,7 @@ fn post_process_handler(req: &mut Request) -> IronResult<Response> {
 
 fn post_process(input_filename: &str, style_filename: &str, output_prefix: &str, output_suffix: &str) -> Option<String> {
     let output_filename = available_filename(output_prefix, output_suffix);
-    let output = Command::new("darktable-cli")
+    let output = Command::new("/Volumes/darktable/darktable.app/Contents/MacOS/darktable-cli")
                      .arg(input_filename)
                      .arg(style_filename)
                      .arg(&output_filename)
