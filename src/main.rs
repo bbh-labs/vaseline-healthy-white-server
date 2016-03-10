@@ -1,9 +1,3 @@
-extern crate iron;
-extern crate mount;
-extern crate persistent;
-extern crate router;
-extern crate staticfile;
-
 // Standard Library
 use std::env::current_dir;
 use std::fs;
@@ -13,6 +7,12 @@ use std::process::Command;
 use std::os::unix::fs::symlink;
 
 // Iron
+extern crate iron;
+extern crate mount;
+extern crate persistent;
+extern crate router;
+extern crate staticfile;
+extern crate urlencoded;
 use iron::prelude::*;
 use iron::status;
 use iron::typemap::Key;
@@ -20,25 +20,30 @@ use mount::Mount;
 use persistent::Write;
 use router::Router;
 use staticfile::Static;
+use urlencoded::UrlEncodedBody;
+
+// Serialize
+extern crate rustc_serialize;
+use rustc_serialize::json;
 
 const ADDRESS: &'static str = "localhost:8080";
 
 #[derive(Copy, Clone)]
-pub struct LastResult;
-impl Key for LastResult {
+pub struct LastRawOutput;
+impl Key for LastRawOutput {
     type Value = String;
 }
 
-#[derive(PartialEq)]
-pub enum Stage {
-    Idle,
-    Processing,
+#[derive(Copy, Clone)]
+pub struct LastOutput;
+impl Key for LastOutput {
+    type Value = String;
 }
 
 #[derive(Copy, Clone)]
-pub struct CurrentStage;
-impl Key for CurrentStage {
-    type Value = Stage;
+pub struct LastFinalOutput;
+impl Key for LastFinalOutput {
+    type Value = String;
 }
 
 fn file_exists(filename: &str) -> bool {
@@ -59,7 +64,7 @@ fn available_filename(prefix: &str, suffix: &str) -> String {
     "".to_string()
 }
 
-fn find_last_result(prefix: &str, suffix: &str) -> String {
+fn find_last_output(prefix: &str, suffix: &str) -> String {
     let mut result = String::from("");
 
     for i in 0..999999 {
@@ -74,21 +79,28 @@ fn find_last_result(prefix: &str, suffix: &str) -> String {
 }
 
 fn result_handler(req: &mut Request) -> IronResult<Response> {
-    let mutex = req.get::<Write<LastResult>>().unwrap();
-    let last_result = mutex.lock().unwrap();
-    Ok(Response::with((status::Ok, (*last_result).clone())))
+    let mutex = req.get::<Write<LastFinalOutput>>().unwrap();
+    let last_final_output = mutex.lock().unwrap();
+    Ok(Response::with((status::Ok, last_final_output.clone())))
 }
 
 fn capture_handler(req: &mut Request) -> IronResult<Response> {
-    let mutex = req.get::<Write<CurrentStage>>().unwrap();
-    let mut stage = mutex.lock().unwrap();
-    if *stage != Stage::Idle {
-        return Ok(Response::with(status::BadRequest));
-    }
-    *stage = Stage::Processing;
+	let response;
 
-    // Capture
-    let output_filename = available_filename("images/raw_output", ".jpg");
+	if let Some(output_filename) = capture("images/raw_output", ".jpg") {
+		let mutex = req.get::<Write<LastRawOutput>>().unwrap();
+		let mut last_output = mutex.lock().unwrap();
+		*last_output = output_filename.clone();
+		response = Response::with((status::Ok, output_filename.clone()));
+	} else {
+		response = Response::with(status::InternalServerError);
+	}
+
+	Ok(response)
+}
+
+fn capture(output_prefix: &str, output_suffix: &str) -> Option<String> {
+    let output_filename = available_filename(output_prefix, output_suffix);
     let output = Command::new("gphoto2")
                      .arg("--auto-detect")
                      .arg("--capture-image-and-download")
@@ -96,53 +108,111 @@ fn capture_handler(req: &mut Request) -> IronResult<Response> {
                      .arg(&output_filename)
                      .output()
                      .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
+
     println!("Raw output filename: {}", &output_filename);
 
+	let option;
     let output_message = if output.status.success() {
-        let mutex = req.get::<Write<LastResult>>().unwrap();
-        let mut last_result = mutex.lock().unwrap();
-        *last_result = output_filename;
+		option = Some(output_filename);
         output.stdout
     } else {
+		option = None;
         output.stderr
     };
 
-    println!("{}", String::from_utf8(output_message).unwrap());
+	if let Ok(message) = String::from_utf8(output_message) {
+		println!("{}", message);
+	}
 
-    if !output.status.success() {
-        *stage = Stage::Idle;
-        return Ok(Response::with(status::InternalServerError));
-    }
+	option
+}
 
-    // Post-Processing
-    let mutex = req.get::<Write<LastResult>>().unwrap();
-    let last_result = mutex.lock().unwrap();
+fn post_process_handler(req: &mut Request) -> IronResult<Response> {
+	// Get Last Raw Output
+    let mutex = req.get::<Write<LastRawOutput>>().unwrap();
+    let last_raw_output = mutex.lock().unwrap();
 
-    let style_filename = "style.xmp";
-    let input_filename = last_result;
-    let output_filename = available_filename("images/output", ".jpg");
+	// Do Post Processing
+	let abc = vec!["a", "b", "c"];
+	let mut output_filenames = Vec::<String>::new();
+
+	for i in 0..abc.len() {
+		if let Some(output_filename) = post_process(&last_raw_output, &format!("style_{}.xmp", abc[i]), &format!("images/output_{}", abc[i]), ".jpg") {
+			// Set Last Output
+			let mutex = req.get::<Write<LastOutput>>().unwrap();
+			let mut last_output = mutex.lock().unwrap();
+			*last_output = output_filename.clone();
+			output_filenames.push(output_filename.clone());
+		} else {
+			return Ok(Response::with(status::InternalServerError));
+		}
+	}
+
+	if let Ok(s) = json::encode(&output_filenames) {
+		return Ok(Response::with((status::Ok, s)));
+	} else {
+		return Ok(Response::with(status::InternalServerError));
+	}
+}
+
+fn post_process(input_filename: &str, style_filename: &str, output_prefix: &str, output_suffix: &str) -> Option<String> {
+    let output_filename = available_filename(output_prefix, output_suffix);
     let output = Command::new("darktable-cli")
-                     .arg((*input_filename).clone())
-                     .arg(&style_filename)
+                     .arg(input_filename)
+                     .arg(style_filename)
                      .arg(&output_filename)
                      .output()
                      .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
-    println!("Output filename: {}", &output_filename);
+    
+	println!("Output filename: {}", &output_filename);
 
-    let response;
+	let option;
     let output_message = if output.status.success() {
-        response = Response::with((status::Ok, output_filename));
-        output.stdout
-    } else {
-        response = Response::with(status::InternalServerError);
-        output.stderr
-    };
+		option = Some(output_filename);
+		output.stdout
+	} else {
+		option = None;
+		output.stderr
+	};
 
-    println!("{}", String::from_utf8(output_message).unwrap());
+	if let Ok(message) = String::from_utf8(output_message) {
+		println!("{}", message);
+	}
 
-    *stage = Stage::Idle;
+	option
+}
 
-    Ok(response)
+fn finalize_handler(req: &mut Request) -> IronResult<Response> {
+	let final_filename = match req.get_ref::<UrlEncodedBody>() {
+		Ok(ref hashmap) => {
+			let files = &hashmap["output"];
+			if files.len() > 0 {
+				let current_directory = current_dir().unwrap();
+				let file = format!("{}/{}", current_directory.to_str().unwrap(), &files[0]);
+				let final_filename = available_filename("images/final_output", ".jpg");
+				if let Err(_) = symlink(file, &final_filename) {
+					return Ok(Response::with(status::InternalServerError));
+				}
+
+				final_filename
+			} else {
+				return Ok(Response::with(status::BadRequest));
+			}
+		},
+		Err(ref e) => {
+			println!("{:?}", e);
+			return Ok(Response::with(status::InternalServerError));
+		},
+	};
+
+	// Set Last Final Output
+	let mutex = req.get::<Write<LastFinalOutput>>().unwrap();
+	let mut last_final_output = mutex.lock().unwrap();
+	*last_final_output = final_filename.clone();
+
+	println!("Final output: {}", &final_filename);
+
+	Ok(Response::with(status::Ok))
 }
 
 fn main() {
@@ -155,12 +225,13 @@ fn main() {
     }
 
     let current_directory = current_dir().unwrap();
-    let _ = symlink(format!("{}/images", current_directory.to_str().unwrap()),
-                    "public/tv/images");
+    let _ = symlink(format!("{}/images", current_directory.to_str().unwrap()), "public/tv/images");
 
     let mut router = Router::new();
     router.get("/result", result_handler);
     router.post("/capture", capture_handler);
+    router.post("/post_process", post_process_handler);
+    router.post("/finalize", finalize_handler);
 
     let mut mount = Mount::new();
     mount.mount("/", Static::new(Path::new("public")));
@@ -168,8 +239,9 @@ fn main() {
     mount.mount("/api", router);
 
     let mut chain = Chain::new(mount);
-    chain.link_before(Write::<LastResult>::one(find_last_result("images/output", ".jpg")));
-    chain.link_before(Write::<CurrentStage>::one(Stage::Idle));
+    chain.link_before(Write::<LastRawOutput>::one(String::from("")));
+    chain.link_before(Write::<LastOutput>::one(String::from("")));
+    chain.link_before(Write::<LastFinalOutput>::one(find_last_output("images/final_output", ".jpg")));
 
     println!("Serving at {}", ADDRESS);
     Iron::new(chain).http(ADDRESS).unwrap();
